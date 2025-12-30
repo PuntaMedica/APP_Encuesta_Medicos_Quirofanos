@@ -1,21 +1,59 @@
+# app.py
 from flask import Flask, render_template_string, request, send_file, redirect, url_for, session, flash
 import pandas as pd
 from datetime import datetime
 import os
+import pyodbc
+from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = 'clave-secreta'  # Cámbiala en producción
+app.secret_key = 'clave-secreta'
 
-USERS_FILE = 'usuarios.xlsx'
-EXCEL_FILE = 'encuesta.xlsx'
+# ===================== CONFIGURACIÓN SQL SERVER =====================
+SQL_CONN_STR = (
+    "Driver={ODBC Driver 17 for SQL Server};"
+    "Server=DESKTOP-EO74OCH\\SQLEXPRESS;"
+    "Database=punta_medica;"
+    "Trusted_Connection=yes;"
+    "Encrypt=no;"
+    "TrustServerCertificate=yes;"
+)
 
-# Si no existe el archivo de usuarios, lo creamos con columnas user y password
-if not os.path.exists(USERS_FILE):
-    df_users = pd.DataFrame(columns=['user', 'password'])
-    df_users.to_excel(USERS_FILE, index=False)
-    print(f"Creado {USERS_FILE}. Añade usuarios con sus contraseñas en ese archivo.")
+def get_db_connection():
+    return pyodbc.connect(SQL_CONN_STR)
 
-# Plantilla para la página de login
+# ===================== INICIALIZACIÓN DE TABLA =====================
+def init_db_quirofanos():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Tabla específica para Quirófanos
+    cursor.execute('''
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='EncuestaQuirofanos' AND xtype='U')
+        CREATE TABLE EncuestaQuirofanos (
+            ID INT IDENTITY(1,1) PRIMARY KEY,
+            FechaEnvio DATETIME,
+            Nombre VARCHAR(255),
+            FechaEncuesta VARCHAR(100),
+            Procedimiento VARCHAR(MAX),
+            Q1 VARCHAR(100), Q2 VARCHAR(MAX),
+            Q3 VARCHAR(100), Q3_motivo VARCHAR(MAX),
+            Q4 VARCHAR(100), Q4_motivo VARCHAR(MAX),
+            Q5 VARCHAR(100), Q6 VARCHAR(MAX), Q7 VARCHAR(100),
+            Q8 VARCHAR(100), Q8_motivo VARCHAR(MAX),
+            Q9 VARCHAR(100), Q9_motivo VARCHAR(MAX),
+            Q10 VARCHAR(MAX),
+            Prov1_Nombre VARCHAR(255), Prov1_Contacto VARCHAR(255),
+            Prov2_Nombre VARCHAR(255), Prov2_Contacto VARCHAR(255),
+            Prov3_Nombre VARCHAR(255), Prov3_Contacto VARCHAR(255),
+            Q12 VARCHAR(MAX)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db_quirofanos()
+
+# ===================== TEMPLATES =====================
 login_template = """
 <!DOCTYPE html>
 <html>
@@ -26,6 +64,7 @@ login_template = """
         .login-box { background: white; padding: 30px; max-width: 400px; margin: auto; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         label, input { display: block; width: 100%; margin-bottom: 15px; }
         input { padding: 8px; font-size: 1em; }
+        button { padding: 10px 20px; cursor: pointer; }
         .error { color: red; margin-bottom: 15px; }
     </style>
 </head>
@@ -49,7 +88,6 @@ login_template = """
 </html>
 """
 
-# Plantilla HTML de la encuesta con botón de Cerrar sesión
 html_template = """
 <!DOCTYPE html>
 <html>
@@ -66,6 +104,7 @@ html_template = """
         select { width: 200px; height: 30px; font-size: 0.9em; }
         textarea { height: 60px; }
         .thankyou { text-align: center; font-size: 1.2em; color: green; margin-top: 20px; }
+        button { padding: 15px; background: #007bff; color: white; border: none; cursor: pointer; width: 100%; font-size: 1.1em; }
     </style>
 </head>
 <body>
@@ -77,9 +116,9 @@ html_template = """
         <h1>ENCUESTA DE SATISFACCIÓN A PERSONAL MÉDICO EN QUIRÓFANOS</h1>
         {% if enviado %}
             <p class="thankyou">¡Gracias por responder la encuesta!</p>
+            <p style="text-align:center"><a href="{{ url_for('encuesta') }}">Nueva respuesta</a></p>
         {% else %}
         <form method="POST">
-            <!-- aquí va todo tu formulario -->
             <label>NOMBRE (si lo considera):</label>
             <input type="text" name="nombre">
 
@@ -91,10 +130,10 @@ html_template = """
 
             <label>1. ¿Cómo calificaría el proceso de programación?</label>
             <select name="q1">
-                <option value="Malo">Malo</option>
-                <option value="Regular">Regular</option>
-                <option value="Bueno">Bueno</option>
                 <option value="Excelente">Excelente</option>
+                <option value="Bueno">Bueno</option>
+                <option value="Regular">Regular</option>
+                <option value="Malo">Malo</option>
             </select>
 
             <label>2. ¿Qué modificaría usted de este procedimiento?</label>
@@ -118,10 +157,10 @@ html_template = """
 
             <label>5. ¿Cómo califica el desempeño del equipo quirúrgico (circulante, instrumentista, biomédica, anestesia) durante la realización del procedimiento?</label>
             <select name="q5">
-                <option value="Malo">Malo</option>
-                <option value="Regular">Regular</option>
-                <option value="Bueno">Bueno</option>
                 <option value="Excelente">Excelente</option>
+                <option value="Bueno">Bueno</option>
+                <option value="Regular">Regular</option>
+                <option value="Malo">Malo</option>
             </select>
 
             <label>6. ¿Cómo podría mejorar el equipo quirúrgico?</label>
@@ -129,10 +168,10 @@ html_template = """
 
             <label>7. ¿Cómo evalúa las instalaciones y funcionamiento de nuestros quirófanos?</label>
             <select name="q7">
-                <option value="Malo">Malo</option>
-                <option value="Regular">Regular</option>
-                <option value="Bueno">Bueno</option>
                 <option value="Excelente">Excelente</option>
+                <option value="Bueno">Bueno</option>
+                <option value="Regular">Regular</option>
+                <option value="Malo">Malo</option>
             </select>
 
             <label>8. ¿El trato y cuidados a su paciente fue satisfactorio durante el pre y postoperatorio?</label>
@@ -155,25 +194,22 @@ html_template = """
             <textarea name="q10"></textarea>
 
             <label>11. En su práctica quirúrgica, ¿cuáles proveedores son los que utiliza?</label>
-            <p>Nombre:</p>
-            <input type="text" name="prov1_nombre">
-            <p>Datos de Contacto:</p>
-            <input type="text" name="prov1_contacto">
+            <p><strong>Proveedor 1:</strong></p>
+            <input type="text" name="prov1_nombre" placeholder="Nombre">
+            <input type="text" name="prov1_contacto" placeholder="Contacto">
 
-            <p>Nombre:</p>
-            <input type="text" name="prov2_nombre">
-            <p>Datos de Contacto:</p>
-            <input type="text" name="prov2_contacto">
+            <p><strong>Proveedor 2:</strong></p>
+            <input type="text" name="prov2_nombre" placeholder="Nombre">
+            <input type="text" name="prov2_contacto" placeholder="Contacto">
 
-            <p>Nombre:</p>
-            <input type="text" name="prov3_nombre">
-            <p>Datos de Contacto:</p>
-            <input type="text" name="prov3_contacto">
+            <p><strong>Proveedor 3:</strong></p>
+            <input type="text" name="prov3_nombre" placeholder="Nombre">
+            <input type="text" name="prov3_contacto" placeholder="Contacto">
 
             <label>12. ¿Tiene algún comentario adicional?</label>
             <textarea name="q12"></textarea>
 
-            <button type="submit">Enviar</button>
+            <button type="submit">Enviar Encuesta</button>
         </form>
         {% endif %}
     </div>
@@ -181,17 +217,21 @@ html_template = """
 </html>
 """
 
-def check_login(username, password):
-    """Verifica credenciales contra usuarios.xlsx"""
-    df = pd.read_excel(USERS_FILE, dtype=str)
-    return ((df['user'] == username) & (df['password'] == password)).any()
+# ===================== RUTAS =====================
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         user = request.form['username']
         pwd = request.form['password']
-        if check_login(user, pwd):
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT [user] FROM UsuariosWeb WHERE [user]=? AND [password]=?", (user, pwd))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
             session['logged_in'] = True
             session['username'] = user
             return redirect(url_for('encuesta'))
@@ -210,40 +250,46 @@ def encuesta():
         return redirect(url_for('login'))
 
     if request.method == 'POST':
-        datos = {
-            'Fecha de Envío': datetime.now().strftime('%Y-%m-%d %H:%M'),
-            'Nombre': request.form.get('nombre'),
-            'Fecha': request.form.get('fecha'),
-            'Procedimiento': request.form.get('procedimiento'),
-            'Q1': request.form.get('q1'),
-            'Q2': request.form.get('q2'),
-            'Q3': request.form.get('q3'),
-            'Q3_motivo': request.form.get('q3_motivo'),
-            'Q4': request.form.get('q4'),
-            'Q4_motivo': request.form.get('q4_motivo'),
-            'Q5': request.form.get('q5'),
-            'Q6': request.form.get('q6'),
-            'Q7': request.form.get('q7'),
-            'Q8': request.form.get('q8'),
-            'Q8_motivo': request.form.get('q8_motivo'),
-            'Q9': request.form.get('q9'),
-            'Q9_motivo': request.form.get('q9_motivo'),
-            'Q10': request.form.get('q10'),
-            'Proveedor1_Nombre': request.form.get('prov1_nombre'),
-            'Proveedor1_Contacto': request.form.get('prov1_contacto'),
-            'Proveedor2_Nombre': request.form.get('prov2_nombre'),
-            'Proveedor2_Contacto': request.form.get('prov2_contacto'),
-            'Proveedor3_Nombre': request.form.get('prov3_nombre'),
-            'Proveedor3_Contacto': request.form.get('prov3_contacto'),
-            'Q12': request.form.get('q12'),
-        }
+        datos = (
+            datetime.now(),
+            request.form.get('nombre'),
+            request.form.get('fecha'),
+            request.form.get('procedimiento'),
+            request.form.get('q1'),
+            request.form.get('q2'),
+            request.form.get('q3'),
+            request.form.get('q3_motivo'),
+            request.form.get('q4'),
+            request.form.get('q4_motivo'),
+            request.form.get('q5'),
+            request.form.get('q6'),
+            request.form.get('q7'),
+            request.form.get('q8'),
+            request.form.get('q8_motivo'),
+            request.form.get('q9'),
+            request.form.get('q9_motivo'),
+            request.form.get('q10'),
+            request.form.get('prov1_nombre'),
+            request.form.get('prov1_contacto'),
+            request.form.get('prov2_nombre'),
+            request.form.get('prov2_contacto'),
+            request.form.get('prov3_nombre'),
+            request.form.get('prov3_contacto'),
+            request.form.get('q12')
+        )
 
-        if os.path.exists(EXCEL_FILE):
-            df = pd.read_excel(EXCEL_FILE)
-            df = pd.concat([df, pd.DataFrame([datos])], ignore_index=True)
-        else:
-            df = pd.DataFrame([datos])
-        df.to_excel(EXCEL_FILE, index=False)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO EncuestaQuirofanos (
+                FechaEnvio, Nombre, FechaEncuesta, Procedimiento, Q1, Q2, Q3, Q3_motivo,
+                Q4, Q4_motivo, Q5, Q6, Q7, Q8, Q8_motivo, Q9, Q9_motivo, Q10,
+                Prov1_Nombre, Prov1_Contacto, Prov2_Nombre, Prov2_Contacto,
+                Prov3_Nombre, Prov3_Contacto, Q12
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, datos)
+        conn.commit()
+        conn.close()
 
         return render_template_string(html_template, enviado=True)
 
@@ -254,10 +300,17 @@ def descargar_resultados():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
 
-    if os.path.exists(EXCEL_FILE):
-        return send_file(EXCEL_FILE, as_attachment=True)
-    return "El archivo de resultados aún no existe.", 404
+    conn = get_db_connection()
+    df = pd.read_sql("SELECT * FROM EncuestaQuirofanos", conn)
+    conn.close()
+    
+    if df.empty:
+        return "No hay resultados registrados aún.", 404
+
+    reporte_file = 'reporte_quirofanos.xlsx'
+    df.to_excel(reporte_file, index=False)
+    return send_file(reporte_file, as_attachment=True)
 
 if __name__ == '__main__':
-    # En modo desarrollo con recarga automática
+    # Ejecución en puerto 6300 según original
     app.run(host='0.0.0.0', port=6300, debug=True)
